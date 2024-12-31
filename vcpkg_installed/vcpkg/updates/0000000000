@@ -1,0 +1,9 @@
+Package: pngpp
+Version: 0.2.10
+Port-Version: 2
+Depends: libpng
+Architecture: x64-windows
+Multi-Arch: same
+Abi: ab69e6c5146181c5416813195fc786d37916746e619af24ac2231c3a4ab5d368
+Description: A C++ wrapper for libpng library.
+Status: install ok half-installed
