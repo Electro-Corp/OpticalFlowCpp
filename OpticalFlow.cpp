@@ -78,7 +78,7 @@ int main()
 	temporal.Write();
 	f1Gray.Write();
 
-	printf("Begin Spatial Gradient calculation\n");
+	printf("Begin Spatial Gradient and final Optical Flow calculation\n");
 
 	// Cheap hack cuz im too lazy to add a special edge case for the edges
 	Frame hack("hack.png", width + 2, height + 2);
@@ -103,6 +103,9 @@ int main()
 		PixelRow grayRowAfter = *(hack.getRow(y + 1));
 		PixelRow sobelRow = *(sobel.getRow(y - 1));
 		//PixelRow f2Row = *(frame2.getRow(y));
+
+		
+
 		for (int x = 1; x < grayRow.getSize() - 2; x++) {
 			// Preform convlution on the first frame
 			// this is so ugly but i wrote it in 10 minutes 
@@ -110,39 +113,91 @@ int main()
 
 			// SobelX
 
+			double Amatrix[9][2]{};
+			// Compute this with Amatrix for optimization
+			double AtMatrix[2][9]{};
+
 			double accX = 0;
 
-			accX += grayRowPrev[x - 1].r * sobelX[0][0];
-			accX += grayRowPrev[x].r * sobelX[0][1];
-			accX += grayRowPrev[x + 1].r * sobelX[0][2];
+			accX += Amatrix[0][0] = AtMatrix[0][0] = grayRowPrev[x - 1].r * sobelX[0][0];
+			accX += Amatrix[1][0] = AtMatrix[0][1] = grayRowPrev[x].r * sobelX[0][1];
+			accX += Amatrix[2][0] = AtMatrix[0][2] = grayRowPrev[x + 1].r * sobelX[0][2];
 
-			accX += grayRow[x - 1].r * sobelX[1][0];
-			accX += grayRow[x].r * sobelX[1][1];
-			accX += grayRow[x + 1].r * sobelX[1][2];
+			accX += Amatrix[3][0] = AtMatrix[0][3] = grayRow[x - 1].r * sobelX[1][0];
+			accX += Amatrix[4][0] = AtMatrix[0][4] = grayRow[x].r * sobelX[1][1];
+			accX += Amatrix[5][0] = AtMatrix[0][5] = grayRow[x + 1].r * sobelX[1][2];
 
-			accX += grayRowAfter[x - 1].r * sobelX[2][0];
-			accX += grayRowAfter[x].r * sobelX[2][1];
-			accX += grayRowAfter[x + 1].r * sobelX[2][2];
+			accX += Amatrix[6][0] = AtMatrix[0][6] = grayRowAfter[x - 1].r * sobelX[2][0];
+			accX += Amatrix[7][0] = AtMatrix[0][7] = grayRowAfter[x].r * sobelX[2][1];
+			accX += Amatrix[8][0] = AtMatrix[0][8] = grayRowAfter[x + 1].r * sobelX[2][2];
 
 			double accY = 0;
 
-			accY += grayRowPrev[x - 1].r * sobelY[0][0];
-			accY += grayRowPrev[x].r * sobelY[0][1];
-			accY += grayRowPrev[x + 1].r * sobelY[0][2];
+			accY += Amatrix[0][1] = AtMatrix[1][0] = grayRowPrev[x - 1].r * sobelY[0][0];
+			accY += Amatrix[1][1] = AtMatrix[1][1] = grayRowPrev[x].r * sobelY[0][1];
+			accY += Amatrix[2][1] = AtMatrix[1][2] = grayRowPrev[x + 1].r * sobelY[0][2];
 
-			accY += grayRow[x - 1].r * sobelY[1][0];
-			accY += grayRow[x].r * sobelY[1][1];
-			accY += grayRow[x + 1].r * sobelY[1][2];
+			accY += Amatrix[3][1] = AtMatrix[1][3] = grayRow[x - 1].r * sobelY[1][0];
+			accY += Amatrix[4][1] = AtMatrix[1][4] = grayRow[x].r * sobelY[1][1];
+			accY += Amatrix[5][1] = AtMatrix[1][5] = grayRow[x + 1].r * sobelY[1][2];
 
-			accY += grayRowAfter[x - 1].r * sobelY[2][0];
-			accY += grayRowAfter[x].r * sobelY[2][1];
-			accY += grayRowAfter[x + 1].r * sobelY[2][2];
+			accY += Amatrix[6][1] = AtMatrix[1][6] = grayRowAfter[x - 1].r * sobelY[2][0];
+			accY += Amatrix[7][1] = AtMatrix[1][7] = grayRowAfter[x].r * sobelY[2][1];
+			accY += Amatrix[8][1] = AtMatrix[1][8] = grayRowAfter[x + 1].r * sobelY[2][2];
 
+
+			// Calculate (At)(A)
+			long double atA[2][2]{};
+
+			for (int i = 0; i < 9; i++) {
+				atA[0][0] += Amatrix[i][0] * Amatrix[i][0];
+				atA[0][1] += Amatrix[i][0] * Amatrix[i][1];
+				atA[1][0] += Amatrix[i][1] * Amatrix[i][0];
+				atA[1][1] += Amatrix[i][1] * Amatrix[i][1];
+			}
+
+			// Calcualate (At)(temporal)
+			long double atB[2][1]{};
+
+			PixelRow temporRow = *(temporal.getRow(y));
+
+			for (int i = 0; i < 9; i++) {
+				atB[0][0] += Amatrix[i][0] * temporRow[i].r;
+				atB[1][0] += Amatrix[i][1] * temporRow[i].r;
+			}
+
+			long double aInv[2][2]{};
+			// 
+
+			long double invConst = 1 / ((atA[0][0] * atA[1][1]) - (atA[0][1] * atA[1][0]));
+
+			long double velocityX = 0, velocityY = 0;
+
+			double determinant = (atA[0][0] * atA[1][1]) - (atA[0][1] * atA[1][0]);
+			if (std::abs(determinant) < 1e-6) {
+				velocityX = velocityY = 0;
+			}
+			else {
+				long double invConst = 1.0 / determinant;
+				aInv[0][0] = invConst * atA[1][1];
+				aInv[0][1] = -invConst * atA[0][1];
+				aInv[1][0] = -invConst * atA[1][0];
+				aInv[1][1] = invConst * atA[0][0];
+
+				velocityX = (aInv[0][0] * atB[0][0]) + (aInv[0][1] * atB[1][0]);
+				velocityY = (aInv[1][0] * atB[0][0]) + (aInv[1][1] * atB[1][0]);
+			}
+			
+
+			//printf("%f %f\n%f %f\r", atA[0][0], atA[0][1], atA[1][0], atA[1][1]);
+
+			printf("%f percent complete | VelX %f VelY %f\r", (((double)y / (double)(height - 2)) * 100.0), velocityX, velocityY);
 
 			Pixel sobelTmp = { accX, accY, 0 };
 			sobelRow.setPixel(sobelTmp, x - 1);
+
 		}
-		printf("%f percent complete\r", (((double)y / (double)(height - 2)) * 100.0));
+		
 		sobel.setRow(sobelRow, y - 1);
 	}
 
