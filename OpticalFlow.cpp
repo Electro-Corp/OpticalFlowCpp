@@ -4,6 +4,9 @@
 #include "OpticalFlow.h"
 #include "Frame.h"
 
+// CONFIG
+int temporalCutoff = 5; // At what pixel difference do we consider it to be.. actually meaningful?
+
 int sobelX[3][3] = {
 	{-1, 0 , 1},
 	{-2, 0, 2},
@@ -26,11 +29,15 @@ typedef struct {
 	double sX, sY;
 } sobelOut;
 
+long double scaleToTensPlace(long double num);
+
+void OpticalFlow(std::string frame1, std::string frame2);
+
 int main()
 {
 	printf("CT's Optical Flow Tool v0.1\n");
-	Frame frame1("1.png");
-	Frame frame2("2.png");
+	Frame frame1("1blur.png");
+	Frame frame2("2blur.png");
 
 	printf("FRAME 1(%d, %d) | FRAME 2(%d, %d)\n", frame1.getWidth(), frame1.getHeight(), frame2.getWidth(), frame2.getHeight());
 
@@ -48,15 +55,16 @@ int main()
 
 	printf("Begin Temporal Gradient calculation\n");
 	// Get temporal gradient (just the brightness lmao)
-	for (int y = 0; y < height - 1; y++) {
+	for (int y = 0; y < height; y++) {
 		PixelRow f1Row = *(frame1.getRow(y));
 		PixelRow f2Row = *(frame2.getRow(y));
 		PixelRow temRow = *(temporal.getRow(y));
 		PixelRow grayRow = *(f1Gray.getRow(y));
-		for (int x = 0; x < f1Row.getSize() - 1; x++) {
+		for (int x = 0; x < f1Row.getSize(); x++) {
 			// Calculate first brigness
 			Pixel p1 = f1Row[x];
 			double oneIntensity = (p1.r * rIntensityConstant) + (p1.g * gIntensityConstant) + (p1.b * bIntensityConstant);
+
 			Pixel g = {oneIntensity, oneIntensity, oneIntensity};
 			grayRow.setPixel(g, x);
 
@@ -68,7 +76,12 @@ int main()
 			double dI = oneIntensity - twoIntensity;
 
 			Pixel tmp = { dI, dI, dI };
+			if (dI < 0) tmp = { 0, dI, 255 };
+			if (std::abs(dI) < temporalCutoff) {
+				tmp = { 0, 0, 0 };
+			}
 			temRow.setPixel(tmp, x);
+		
 		}
 		printf("%f percent complete\r", (((double)y / (double)(height - 1)) * 100.0));
 		temporal.setRow(temRow, y);
@@ -97,11 +110,21 @@ int main()
 
 	Frame sobel("sobel.png", width, height);
 
+	frame1.setPath("1WithVelocites.png");
+
+	//frame1.drawLine(150, 200, 50, 25);
+
+	frame1.Write();
+
 	for (int y = 1; y < height - 2; y++) {
 		PixelRow grayRow = *(hack.getRow(y));
 		PixelRow grayRowPrev = *(hack.getRow(y - 1));
 		PixelRow grayRowAfter = *(hack.getRow(y + 1));
 		PixelRow sobelRow = *(sobel.getRow(y - 1));
+		PixelRow temporRow = *(temporal.getRow(y));
+
+		PixelRow frame1VelRow = *(frame1.getRow(y));
+
 		//PixelRow f2Row = *(frame2.getRow(y));
 
 		
@@ -159,11 +182,10 @@ int main()
 			// Calcualate (At)(temporal)
 			long double atB[2][1]{};
 
-			PixelRow temporRow = *(temporal.getRow(y));
 
 			for (int i = 0; i < 9; i++) {
-				atB[0][0] += Amatrix[i][0] * temporRow[i].r;
-				atB[1][0] += Amatrix[i][1] * temporRow[i].r;
+				atB[0][0] += Amatrix[i][0] * temporRow[x].g;
+				atB[1][0] += Amatrix[i][1] * temporRow[x].g;
 			}
 
 			long double aInv[2][2]{};
@@ -173,9 +195,11 @@ int main()
 
 			long double velocityX = 0, velocityY = 0;
 
-			double determinant = (atA[0][0] * atA[1][1]) - (atA[0][1] * atA[1][0]);
-			if (std::abs(determinant) < 1e-6) {
+			double regularization = 1e-3;
+			long double determinant = (atA[0][0] * atA[1][1]) - (atA[0][1] * atA[1][0]) + regularization;
+			if (std::abs(determinant) < 1e-6 || std::isinf(invConst)) {
 				velocityX = velocityY = 0;
+				printf("%f percent complete\r", (((double)y / (double)(height - 2)) * 100.0));
 			}
 			else {
 				long double invConst = 1.0 / determinant;
@@ -186,12 +210,30 @@ int main()
 
 				velocityX = (aInv[0][0] * atB[0][0]) + (aInv[0][1] * atB[1][0]);
 				velocityY = (aInv[1][0] * atB[0][0]) + (aInv[1][1] * atB[1][0]);
+
+				/*if (std::abs(velocityX) < 1e-3) {
+					velocityX = (velocityX < 0 ? -1e-3 : 1e-3);
+				}
+				if (std::abs(velocityY) < 1e-3) {
+					velocityY = (velocityY < 0 ? -1e-3 : 1e-3);
+				}*/
+
+				velocityX = scaleToTensPlace(velocityX) / 5;
+				velocityY = scaleToTensPlace(velocityY) / 5;
+
+				Pixel tmp = {frame1VelRow[x].r, (atB[1][0] + frame1VelRow[x].g) / 2, (atB[0][0] + frame1VelRow[x].g / 2)};
+				frame1.getRow(y)->setPixel(tmp, x);
+
+				if(x % 10 == 0 && y % 10 == 0 && (velocityX != 0 || velocityY != 0))
+					frame1.drawLine(x, y, velocityX, velocityY);
+
+				printf("%f percent complete | VelX %f VelY %f\r", (((double)y / (double)(height - 2)) * 100.0), velocityX, velocityY);
 			}
 			
 
 			//printf("%f %f\n%f %f\r", atA[0][0], atA[0][1], atA[1][0], atA[1][1]);
 
-			printf("%f percent complete | VelX %f VelY %f\r", (((double)y / (double)(height - 2)) * 100.0), velocityX, velocityY);
+			
 
 			Pixel sobelTmp = { accX, accY, 0 };
 			sobelRow.setPixel(sobelTmp, x - 1);
@@ -203,7 +245,13 @@ int main()
 
 	sobel.Write();
 
-	printf("Flipping Sobel to create AT matrix\n");
+	// Draw velocity arrows
+	
+
+	frame1.Write();
+
+
+	/*printf("Flipping Sobel to create AT matrix\n");
 
 	Frame sobelT("sobelT.png", height, width);
 
@@ -216,9 +264,23 @@ int main()
 		sobelT.setRow(sobelTRow, y);
 	}
 	sobelT.Write();
-
+	*/
 
 
 
 	return 0;
+}
+
+
+long double scaleToTensPlace(long double num) {
+	if (num == 0.0L) {
+		return 0.0L;
+	}
+	long double sign = (num < 0.0L) ? -1.0L : 1.0L;
+	num = std::abs(num);
+	while (num < 10.0L) {
+		num *= 10.0L;
+	}
+
+	return sign * num;
 }

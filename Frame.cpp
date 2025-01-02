@@ -70,6 +70,44 @@ std::string Frame::getPath() {
     return path;
 }
 
+void Frame::setPath(std::string newPath) {
+    path = newPath;
+}
+
+void Frame::drawLine(int x, int y, double xV, double yV) {
+    int xEnd = static_cast<int>(x + xV);
+    int yEnd = static_cast<int>(y + yV);
+
+    if (x < 0 || x >= width || y < 0 || y >= height || xEnd < 0 || xEnd >= width || yEnd < 0 || yEnd >= height) {
+        return;
+    }
+
+    int dx = std::abs(xEnd - x);
+    int dy = std::abs(yEnd - y);
+    int sx = (x < xEnd) ? 1 : -1;
+    int sy = (y < yEnd) ? 1 : -1;
+
+    int err = dx - dy;
+
+    while (true){
+        Pixel tmp = { 255, 0, 0 };
+        this->pixels[y].setPixel(tmp, x);
+
+        if (x == xEnd && y == yEnd) break;
+
+        int e2 = 2 * err;
+        if (e2 > -dy) {
+            err -= dy;
+            x += sx;
+        }
+        if (e2 < dx) {
+            err += dx;
+            y += sy;
+        }
+    }
+}
+
+
 void PixelRow::addPixel(Pixel p) {
     this->pixels.push_back(p);
 }

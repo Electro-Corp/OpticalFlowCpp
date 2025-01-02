@@ -57,7 +57,11 @@ public:
 
     int getHeight();
 
+    void drawLine(int x, int y, double xV, double yV);
+
     std::string getPath();
+
+    void setPath(std::string path);
 
     PixelRow* operator[](int i);
 
