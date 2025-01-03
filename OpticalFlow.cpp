@@ -7,6 +7,9 @@
 // CONFIG
 int temporalCutoff = 5; // At what pixel difference do we consider it to be.. actually meaningful?
 
+std::string file1 = "1decSmallblur.png";
+std::string file2 = "2decSmallblur.png";
+
 int sobelX[3][3] = {
 	{-1, 0 , 1},
 	{-2, 0, 2},
@@ -29,15 +32,271 @@ typedef struct {
 	double sX, sY;
 } sobelOut;
 
+typedef struct {
+	Fl_Box* bufferBox;
+	Fl_Box* imageBox;
+} TEMPORAL_VIEW_UPDATE;
+
+typedef struct {
+	int oneOrTwo;
+	Fl_Box* box;
+} OPEN_IMAGE_DATA ;
+
+
+static Fl_PNG_Image* temporalImage = nullptr;
+static Fl_PNG_Image* opticalImage = nullptr;
+
+static Fl_PNG_Image* prevImageOne = nullptr;
+static Fl_PNG_Image* prevImageTwo = nullptr;
+
+static std::string newStuff = "Temporal Cutoff: 50";
+
 long double scaleToTensPlace(long double num);
 
-void OpticalFlow(std::string frame1, std::string frame2);
+void GenerateTemporal(std::string f1, std::string f2);
+
+void OpticalFlow(std::string f1, std::string f2);
+
+
+void temporalSliderCallBack(Fl_Widget* widget, void* data) {
+	Fl_Slider* slider = (Fl_Slider*)widget;
+	int value = slider->value();
+
+	temporalCutoff = value;
+
+	TEMPORAL_VIEW_UPDATE* guy = (TEMPORAL_VIEW_UPDATE*)data;
+
+	// Update the label or perform some operation
+	Fl_Box* box = (Fl_Box*)guy->bufferBox;
+	//char buffer[256];
+	//sprintf_s(buffer, "Temporal Cutoff: %d", temporalCutoff);
+	newStuff = std::string{ std::string("Temporal Cutoff: ") + std::to_string(temporalCutoff)};
+	box->label(newStuff.c_str());
+
+}
+
+void temporalGenerateCallBack(Fl_Widget* widget, void* data) {
+
+	TEMPORAL_VIEW_UPDATE* guy = (TEMPORAL_VIEW_UPDATE*)data;
+	Fl_Window* messageBox = new Fl_Window(300, 150, "Wait");
+	Fl_Box* messageText = new Fl_Box(20, 40, 260, 30, "Wait for temporal generation...");
+	messageText->box(FL_FLAT_BOX);
+	messageText->labelsize(14);
+	messageText->align(FL_ALIGN_CENTER | FL_ALIGN_INSIDE);
+	messageBox->add(messageText);
+
+	messageBox->end();
+	messageBox->show();
+
+	std::thread temporalThread(GenerateTemporal, file1, file2);
+	temporalThread.join();
+
+	messageBox->hide();
+
+	if (temporalImage) delete temporalImage; // Free previous image
+	temporalImage = new Fl_PNG_Image("temporal.png");
+	Fl_Box* imageBox = (Fl_Box*)guy->imageBox;
+	Fl_Image* scaled_image = temporalImage->copy(270, 180);
+	imageBox->image(scaled_image);
+	imageBox->redraw();
+}
+
+void opticalGenerateCallBack(Fl_Widget* widget, void* data) {
+	Fl_Window* messageBox = new Fl_Window(300, 150, "Wait for Lucas-Kande optical flow...");
+	Fl_Box* messageText = new Fl_Box(20, 40, 260, 30, "Wait for Optical Flow...");
+	messageText->box(FL_FLAT_BOX);
+	messageText->labelsize(14);
+	messageText->align(FL_ALIGN_CENTER | FL_ALIGN_INSIDE);
+	messageBox->add(messageText);
+
+	messageBox->end();
+	messageBox->show();
+
+	std::thread opticalThread(OpticalFlow, file1, file2);
+	opticalThread.join();
+
+	messageBox->hide();
+
+	if (opticalImage) delete opticalImage; // Free previous image
+	opticalImage = new Fl_PNG_Image("1WithVelocites.png");
+	Fl_Box* imageBox = (Fl_Box*)data;
+	Fl_Image* scaled_image = opticalImage->copy(270, 180);
+	imageBox->image(scaled_image);
+	imageBox->redraw();
+}
+
+void openFileCallback(Fl_Widget* widget, void* data) {
+	Fl_File_Chooser chooser(".", "Image Files (*.{png,jpg,jpeg,bmp,gif})", Fl_File_Chooser::SINGLE, "Choose an Image File");
+	chooser.show();
+
+	while (chooser.shown()) {
+		Fl::wait();
+	}
+
+	if (chooser.value() != nullptr) {
+		OPEN_IMAGE_DATA* oid = (OPEN_IMAGE_DATA*)data;
+		std::string filePath = chooser.value();
+		if (oid->oneOrTwo == 1)
+			file1 = filePath;
+		else
+			file2 = filePath;
+		Fl_Box* f1 = (Fl_Box*)oid->box;
+		if (prevImageOne) delete prevImageOne;
+		prevImageOne = new Fl_PNG_Image(filePath.c_str());
+		Fl_Image* scaled_image = prevImageOne->copy(270, 180);
+		f1->image(scaled_image);
+		f1->redraw();
+	}
+}
+
+
+
+// UI offset
+int temporalYOffset = 240;
+
 
 int main()
 {
 	printf("CT's Optical Flow Tool v0.1\n");
-	Frame frame1("1blur.png");
-	Frame frame2("2blur.png");
+	Fl_Window* window = new Fl_Window(600, 550, "CT Optical Flow");
+
+	
+	// Original images
+	Fl_PNG_Image ogImage1(file1.c_str());
+	Fl_Box* imageBoxOg1 = new Fl_Box(0, 50, 270, 180);
+	Fl_Image* scaledOG1 = ogImage1.copy(270, 180);
+	imageBoxOg1->image(scaledOG1);
+	Fl_PNG_Image ogImage2(file2.c_str());
+	Fl_Box* imageBoxOg2 = new Fl_Box(300, 50, 270, 180);
+	Fl_Image* scaledOG2 = ogImage2.copy(270, 180);
+	imageBoxOg2->image(scaledOG2);
+
+
+	Fl_Button* openImage1Button = new Fl_Button(0, 0, 150, 40, "Open Image 1");
+
+	OPEN_IMAGE_DATA but1Dat = { 1, imageBoxOg1 };
+	openImage1Button->callback(openFileCallback, &but1Dat);
+
+	Fl_Button* openImage2Button = new Fl_Button(300, 0, 150, 40, "Open Image 2");
+
+	OPEN_IMAGE_DATA but2Dat = { 2, imageBoxOg2 };
+	openImage2Button->callback(openFileCallback, &but2Dat);
+
+
+	GenerateTemporal("1decBlur.png", "2decBlur.png");
+
+
+	// Temporal Preview
+	Fl_PNG_Image temporalImage("temporal.png");
+	Fl_Box* imageBox = new Fl_Box(0, 0 + temporalYOffset, 270, 180);
+	Fl_Image* scaled_image = temporalImage.copy(270, 180);
+	imageBox->image(scaled_image);
+
+	Fl_Slider* temporalCutoffSlider = new Fl_Slider(0, 200 + temporalYOffset, 300, 20);
+	temporalCutoffSlider->type(FL_HOR_NICE_SLIDER);
+	temporalCutoffSlider->bounds(0, 255);
+	temporalCutoffSlider->value(50);
+
+	Fl_Box* temporalCutoffSliderLabel = new Fl_Box(10, 250 + temporalYOffset, 100, 20, "Temporal Cutoff: 50");
+
+	Fl_Button* genTemporalButton = new Fl_Button(130, 250 + temporalYOffset, 180, 25, "Generate Temporal");
+
+	TEMPORAL_VIEW_UPDATE temp = { temporalCutoffSliderLabel, imageBox};
+
+	temporalCutoffSlider->callback(temporalSliderCallBack, &temp);
+	genTemporalButton->callback(temporalGenerateCallBack, &temp);
+
+	// Optical Flow final image
+	Fl_PNG_Image velImage("1WithVelocites.png");
+	Fl_Box* velImageBox = new Fl_Box(300, 0 + temporalYOffset, 270, 180);
+	Fl_Image* vel_scaled_image = velImage.copy(270, 180);
+	velImageBox->image(vel_scaled_image);
+
+	Fl_Button* genOptics = new Fl_Button(320, 250 + temporalYOffset, 180, 25, "Generate Optical Flow");
+	genOptics->callback(opticalGenerateCallBack, velImageBox);
+
+
+	Fl::lock();
+
+	window->end();
+	window->show();
+
+	return Fl::run();
+}
+
+
+long double scaleToTensPlace(long double num) {
+	if (num == 0.0L) {
+		return 0.0L;
+	}
+	long double sign = (num < 0.0L) ? -1.0L : 1.0L;
+	num = std::abs(num);
+	while (num < 10.0L) {
+		num *= 10.0L;
+	}
+
+	return sign * num;
+}
+
+void GenerateTemporal(std::string f1, std::string f2) {
+	Frame frame1(f1);
+	Frame frame2(f2);
+
+	printf("FRAME 1(%d, %d) | FRAME 2(%d, %d)\n", frame1.getWidth(), frame1.getHeight(), frame2.getWidth(), frame2.getHeight());
+
+	int width = frame1.getWidth();
+	int height = frame2.getHeight();
+
+	Frame temporal("temporal.png", width, height);
+	Frame f1Gray("f1gray.png", width, height);
+
+	assert(frame1.getHeight() == frame2.getHeight());
+	assert(frame1.getWidth() == frame2.getWidth());
+
+	// Preform Lucas-Kande Optical Flow
+
+	printf("Begin Temporal Gradient calculation\n");
+	// Get temporal gradient (just the brightness lmao)
+	for (int y = 0; y < height; y++) {
+		PixelRow f1Row = *(frame1.getRow(y));
+		PixelRow f2Row = *(frame2.getRow(y));
+		PixelRow temRow = *(temporal.getRow(y));
+		PixelRow grayRow = *(f1Gray.getRow(y));
+		for (int x = 0; x < f1Row.getSize(); x++) {
+			// Calculate first brigness
+			Pixel p1 = f1Row[x];
+			double oneIntensity = (p1.r * rIntensityConstant) + (p1.g * gIntensityConstant) + (p1.b * bIntensityConstant);
+
+			Pixel g = { oneIntensity, oneIntensity, oneIntensity };
+			grayRow.setPixel(g, x);
+
+			// Calculate second brigness
+			Pixel p2 = f2Row[x];
+			double twoIntensity = (p2.r * rIntensityConstant) + (p2.g * gIntensityConstant) + (p2.b * bIntensityConstant);
+
+			// Calculate difference
+			double dI = oneIntensity - twoIntensity;
+
+			Pixel tmp = { dI, dI, dI };
+			if (dI < 0) tmp = { 0, dI, 255 };
+			if (std::abs(dI) < temporalCutoff) {
+				tmp = { 0, 0, 0 };
+			}
+			temRow.setPixel(tmp, x);
+
+		}
+		//printf("%f percent complete\r", (((double)y / (double)(height - 1)) * 100.0));
+		temporal.setRow(temRow, y);
+		f1Gray.setRow(grayRow, y);
+	}
+
+	temporal.Write();
+	f1Gray.Write();
+}
+
+void OpticalFlow(std::string f1, std::string f2) {
+	Frame frame1(f1);
+	Frame frame2(f2);
 
 	printf("FRAME 1(%d, %d) | FRAME 2(%d, %d)\n", frame1.getWidth(), frame1.getHeight(), frame2.getWidth(), frame2.getHeight());
 
@@ -65,7 +324,7 @@ int main()
 			Pixel p1 = f1Row[x];
 			double oneIntensity = (p1.r * rIntensityConstant) + (p1.g * gIntensityConstant) + (p1.b * bIntensityConstant);
 
-			Pixel g = {oneIntensity, oneIntensity, oneIntensity};
+			Pixel g = { oneIntensity, oneIntensity, oneIntensity };
 			grayRow.setPixel(g, x);
 
 			// Calculate second brigness
@@ -81,7 +340,7 @@ int main()
 				tmp = { 0, 0, 0 };
 			}
 			temRow.setPixel(tmp, x);
-		
+
 		}
 		printf("%f percent complete\r", (((double)y / (double)(height - 1)) * 100.0));
 		temporal.setRow(temRow, y);
@@ -90,6 +349,8 @@ int main()
 
 	temporal.Write();
 	f1Gray.Write();
+
+	
 
 	printf("Begin Spatial Gradient and final Optical Flow calculation\n");
 
@@ -127,7 +388,7 @@ int main()
 
 		//PixelRow f2Row = *(frame2.getRow(y));
 
-		
+
 
 		for (int x = 1; x < grayRow.getSize() - 2; x++) {
 			// Preform convlution on the first frame
@@ -221,66 +482,32 @@ int main()
 				velocityX = scaleToTensPlace(velocityX) / 5;
 				velocityY = scaleToTensPlace(velocityY) / 5;
 
-				Pixel tmp = {frame1VelRow[x].r, (atB[1][0] + frame1VelRow[x].g) / 2, (atB[0][0] + frame1VelRow[x].g / 2)};
+				Pixel tmp = { frame1VelRow[x].r, (atB[1][0] + frame1VelRow[x].g) / 2, (atB[0][0] + frame1VelRow[x].g) / 2 };
 				frame1.getRow(y)->setPixel(tmp, x);
 
-				if(x % 10 == 0 && y % 10 == 0 && (velocityX != 0 || velocityY != 0))
+				if (x % 10 == 0 && y % 10 == 0 && (velocityX != 0 || velocityY != 0))
 					frame1.drawLine(x, y, velocityX, velocityY);
 
 				printf("%f percent complete | VelX %f VelY %f\r", (((double)y / (double)(height - 2)) * 100.0), velocityX, velocityY);
 			}
-			
+
 
 			//printf("%f %f\n%f %f\r", atA[0][0], atA[0][1], atA[1][0], atA[1][1]);
 
-			
+
 
 			Pixel sobelTmp = { accX, accY, 0 };
 			sobelRow.setPixel(sobelTmp, x - 1);
 
 		}
-		
+
 		sobel.setRow(sobelRow, y - 1);
 	}
 
 	sobel.Write();
 
 	// Draw velocity arrows
-	
+
 
 	frame1.Write();
-
-
-	/*printf("Flipping Sobel to create AT matrix\n");
-
-	Frame sobelT("sobelT.png", height, width);
-
-	for (int y = 0; y < width; y++) {
-		PixelRow sobelTRow = *(sobelT.getRow(y));
-		for (int x = 0; x < height; x++) {
-			Pixel newGuy = (*sobel.getRow(x))[y];
-			sobelTRow.setPixel(newGuy, x);
-		}
-		sobelT.setRow(sobelTRow, y);
-	}
-	sobelT.Write();
-	*/
-
-
-
-	return 0;
-}
-
-
-long double scaleToTensPlace(long double num) {
-	if (num == 0.0L) {
-		return 0.0L;
-	}
-	long double sign = (num < 0.0L) ? -1.0L : 1.0L;
-	num = std::abs(num);
-	while (num < 10.0L) {
-		num *= 10.0L;
-	}
-
-	return sign * num;
 }
